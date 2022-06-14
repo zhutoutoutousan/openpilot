@@ -199,14 +199,18 @@ def thermald_thread(end_event, hw_queue):
   fan_controller = None
 
   while not end_event.is_set():
+    cloudlog.timestamp("Start loop")
     sm.update(PANDA_STATES_TIMEOUT)
+    cloudlog.timestamp("sm.update()")
 
     pandaStates = sm['pandaStates']
     peripheralState = sm['peripheralState']
 
     msg = read_thermal(thermal_config)
+    cloudlog.timestamp("read thermal config")
 
     if sm.updated['pandaStates'] and len(pandaStates) > 0:
+      cloudlog.timestamp("pandaStates updated")
 
       # Set ignition based on any panda connected
       onroad_conditions["ignition"] = any(ps.ignitionLine or ps.ignitionCan for ps in pandaStates if ps.pandaType != log.PandaState.PandaType.unknown)
@@ -218,22 +222,30 @@ def thermald_thread(end_event, hw_queue):
       # Setup fan handler on first connect to panda
       if fan_controller is None and peripheralState.pandaType != log.PandaState.PandaType.unknown:
         if TICI:
+          cloudlog.timestamp("creating fan controller")
           fan_controller = TiciFanController()
+          cloudlog.timestamp("created fan controller")
 
     elif (sec_since_boot() - sm.rcv_time['pandaStates']/1e9) > DISCONNECT_TIMEOUT:
       if onroad_conditions["ignition"]:
         onroad_conditions["ignition"] = False
-        cloudlog.error("panda timed out onroad")
+        cloudlog.timestamp("panda timed out onroad")
 
+    else:
+      cloudlog.timestamp("no pandaStates update")
+
+    cloudlog.timestamp("getting hw state")
     try:
       last_hw_state = hw_queue.get_nowait()
     except queue.Empty:
       pass
+    cloudlog.timestamp("got hw state")
 
     msg.deviceState.freeSpacePercent = get_available_percent(default=100.0)
     msg.deviceState.memoryUsagePercent = int(round(psutil.virtual_memory().percent))
     msg.deviceState.cpuUsagePercent = [int(round(n)) for n in psutil.cpu_percent(percpu=True)]
     msg.deviceState.gpuUsagePercent = int(round(HARDWARE.get_gpu_usage_percent()))
+    cloudlog.timestamp("got usage stats")
 
     msg.deviceState.networkType = last_hw_state.network_type
     msg.deviceState.networkMetered = last_hw_state.network_metered
@@ -247,6 +259,7 @@ def thermald_thread(end_event, hw_queue):
     msg.deviceState.screenBrightnessPercent = HARDWARE.get_screen_brightness()
     msg.deviceState.usbOnline = HARDWARE.get_usb_present()
     current_filter.update(msg.deviceState.batteryCurrent / 1e6)
+    cloudlog.timestamp("got more device stats")
 
     max_comp_temp = temp_filter.update(
       max(max(msg.deviceState.cpuTempC), msg.deviceState.memoryTempC, max(msg.deviceState.gpuTempC))
@@ -267,6 +280,8 @@ def thermald_thread(end_event, hw_queue):
         thermal_status = list(THERMAL_BANDS.keys())[band_idx - 1]
       elif current_band.max_temp is not None and max_comp_temp > current_band.max_temp:
         thermal_status = list(THERMAL_BANDS.keys())[band_idx + 1]
+    cloudlog.timestamp("set thermal status")
+
 
     # **** starting logic ****
 
@@ -289,6 +304,7 @@ def thermald_thread(end_event, hw_queue):
     # controls will warn with CPU above 95 or battery above 60
     onroad_conditions["device_temp_good"] = thermal_status < ThermalStatus.danger
     set_offroad_alert_if_changed("Offroad_TemperatureTooHigh", (not onroad_conditions["device_temp_good"]))
+    cloudlog.timestamp("starting logic")
 
     # TODO: this should move to TICI.initialize_hardware, but we currently can't import params there
     if TICI:
@@ -305,6 +321,7 @@ def thermald_thread(end_event, hw_queue):
               cloudlog.event("Unsupported NVMe", model=model, error=True)
           except Exception:
             pass
+    cloudlog.timestamp("set alerts")
 
     # Handle offroad/onroad transition
     should_start = all(onroad_conditions.values())
@@ -318,6 +335,7 @@ def thermald_thread(end_event, hw_queue):
       params.put_bool("IsEngaged", False)
       engaged_prev = False
       HARDWARE.set_power_save(not should_start)
+    cloudlog.timestamp("put params")
 
     if sm.updated['controlsState']:
       engaged = sm['controlsState'].enabled
@@ -325,11 +343,13 @@ def thermald_thread(end_event, hw_queue):
         params.put_bool("IsEngaged", engaged)
         engaged_prev = engaged
 
+      cloudlog.timestamp("kmsg start")
       try:
         with open('/dev/kmsg', 'w') as kmsg:
           kmsg.write(f"<3>[thermald] engaged: {engaged}\n")
       except Exception:
         pass
+      cloudlog.timestamp("kmsg end")
 
     if should_start:
       off_ts = None
@@ -345,6 +365,7 @@ def thermald_thread(end_event, hw_queue):
         off_ts = sec_since_boot()
 
     # Offroad power monitoring
+    cloudlog.timestamp("offroad power monitoring")
     power_monitor.calculate(peripheralState, onroad_conditions["ignition"])
     msg.deviceState.offroadPowerUsageUwh = power_monitor.get_power_used()
     msg.deviceState.carBatteryCapacityUwh = max(0, power_monitor.get_car_battery_capacity())
@@ -354,14 +375,17 @@ def thermald_thread(end_event, hw_queue):
       msg.deviceState.powerDrawW = current_power_draw
     else:
       msg.deviceState.powerDrawW = 0
+    cloudlog.timestamp("end offroad power monitoring")
 
     # Check if we need to disable charging (handled by boardd)
     msg.deviceState.chargingDisabled = power_monitor.should_disable_charging(onroad_conditions["ignition"], in_car, off_ts)
+    cloudlog.timestamp("end offroad power monitoring2")
 
     # Check if we need to shut down
     if power_monitor.should_shutdown(peripheralState, onroad_conditions["ignition"], in_car, off_ts, started_seen):
       cloudlog.warning(f"shutting device down, offroad since {off_ts}")
       params.put_bool("DoShutdown", True)
+    cloudlog.timestamp("should_shutdown")
 
     msg.deviceState.chargingError = current_filter.x > 0. and msg.deviceState.batteryPercent < 90  # if current is positive, then battery is being discharged
     msg.deviceState.started = started_ts is not None
@@ -373,6 +397,7 @@ def thermald_thread(end_event, hw_queue):
 
     msg.deviceState.thermalStatus = thermal_status
     pm.send("deviceState", msg)
+    cloudlog.timestamp("sent deviceState")
 
     should_start_prev = should_start
     startup_conditions_prev = startup_conditions.copy()
@@ -397,6 +422,7 @@ def thermald_thread(end_event, hw_queue):
       statlog.gauge(f"modem_temperature{i}", temp)
     statlog.gauge("fan_speed_percent_desired", msg.deviceState.fanSpeedPercentDesired)
     statlog.gauge("screen_brightness_percent", msg.deviceState.screenBrightnessPercent)
+    cloudlog.timestamp("gauge")
 
     # report to server once every 10 minutes
     if (count % int(600. / DT_TRML)) == 0:
@@ -406,6 +432,7 @@ def thermald_thread(end_event, hw_queue):
                      peripheralState=strip_deprecated_keys(peripheralState.to_dict()),
                      location=(strip_deprecated_keys(sm["gpsLocationExternal"].to_dict()) if sm.alive["gpsLocationExternal"] else None),
                      deviceState=strip_deprecated_keys(msg.to_dict()))
+    cloudlog.timestamp("STATUS_PACKET")
 
     count += 1
 
