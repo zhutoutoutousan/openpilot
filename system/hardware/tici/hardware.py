@@ -13,6 +13,7 @@ from system.hardware.base import HardwareBase, ThermalConfig
 from system.hardware.tici import iwlist
 from system.hardware.tici.pins import GPIO
 from system.hardware.tici.amplifier import Amplifier
+from system.swaglog import cloudlog
 
 NM = 'org.freedesktop.NetworkManager'
 NM_CON_ACT = NM + '.Connection.Active'
@@ -392,8 +393,10 @@ class Tici(HardwareBase):
   def set_power_save(self, powersave_enabled):
     # amplifier, 100mW at idle
     self.amplifier.set_global_shutdown(amp_disabled=powersave_enabled)
+    cloudlog.timestamp("set_global_shutdown")
     if not powersave_enabled:
       self.amplifier.initialize_configuration()
+      cloudlog.timestamp("initialize_configuration")
 
     # *** CPU config ***
 
@@ -401,10 +404,12 @@ class Tici(HardwareBase):
     for i in range(5, 8):
       val = '0' if powersave_enabled else '1'
       sudo_write(val, f'/sys/devices/system/cpu/cpu{i}/online')
+    cloudlog.timestamp("offline big cluster")
 
     for n in ('0', '4'):
       gov = 'ondemand' if powersave_enabled else 'performance'
       sudo_write(gov, f'/sys/devices/system/cpu/cpufreq/policy{n}/scaling_governor')
+    cloudlog.timestamp("gov")
 
     # *** IRQ config ***
     affine_irq(5, 565)   # kgsl-3d0
@@ -412,6 +417,7 @@ class Tici(HardwareBase):
     affine_irq(4, 1069)  # xhci-hcd:usb3 goes on the boardd core
     for irq in range(237, 246):
       affine_irq(5, irq) # camerad
+    cloudlog.timestamp("IRQ")
 
   def get_gpu_usage_percent(self):
     try:

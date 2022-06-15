@@ -329,12 +329,17 @@ def thermald_thread(end_event, hw_queue):
       should_start = should_start and all(startup_conditions.values())
 
     if should_start != should_start_prev or (count == 0):
+      cloudlog.timestamp("putting params")
       params.put_bool("IsOnroad", should_start)
+      cloudlog.timestamp("put param 1")
       params.put_bool("IsOffroad", not should_start)
+      cloudlog.timestamp("put param 2")
 
       params.put_bool("IsEngaged", False)
+      cloudlog.timestamp("put param 3")
       engaged_prev = False
       HARDWARE.set_power_save(not should_start)
+      cloudlog.timestamp("set power save mode: {}".format(not should_start))
     cloudlog.timestamp("put params")
 
     if sm.updated['controlsState']:
