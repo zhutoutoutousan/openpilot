@@ -223,6 +223,8 @@ void CameraViewWidget::paintGL() {
   int frame_idx;
   for (frame_idx = 0; frame_idx < frames.size() - 1; frame_idx++) {
     if (frames[frame_idx].first == draw_frame_id) break;
+  } else {
+    qDebug() << "Frame id not in buffer, using latest!";
   }
 
   glViewport(0, 0, width(), height());
