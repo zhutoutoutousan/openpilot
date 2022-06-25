@@ -152,8 +152,8 @@ def fingerprint(logcan, sendcan):
       if only_toyota_left(candidate_cars[b]):
         frame_fingerprint = 100  # 1s
       if len(candidate_cars[b]) == 1 and frame > frame_fingerprint:
-          # fingerprint done
-          car_fingerprint = candidate_cars[b][0]
+        # fingerprint done
+        car_fingerprint = candidate_cars[b][0]
 
     # bail if no cars left or we've been waiting for more than 2s
     failed = (all(len(cc) == 0 for cc in candidate_cars.values()) and frame > frame_fingerprint) or frame > 200
